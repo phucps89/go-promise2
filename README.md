@@ -355,7 +355,7 @@ _, err := promise2.All(context.Background(), promises...).Await(context.Backgrou
 ## Chạy Tests
 
 ```bash
-go test ./promise2 -v
+go test github.com/phucps89/go-promise2/... -v
 ```
 
 ## License
