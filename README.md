@@ -2,20 +2,19 @@
 
 `promise2` là một package Go cung cấp Promise pattern (giống JavaScript) kết hợp với Worker Pool để xử lý concurrent tasks một cách đơn giản và hiệu quả.
 
+## Cài Đặt
+
+```bash
+go get github.com/phucps89/go-promise2
+```
+
 ## Tính Năng
 
 ✅ **Promise API** - Tương tự JavaScript Promise  
 ✅ **Worker Pool** - Quản lý goroutines hiệu quả  
 ✅ **Combinators** - All, Race, AllSettled, Any, Sequence  
 ✅ **Chainable** - Then, Map, Catch, Finally  
-✅ **Context Support** - Hỗ trợ cancellation  
-✅ **Dễ đọc & dễ bảo trì** - Code sạch và well-documented  
-
-## Cài Đặt
-
-```go
-import "path/to/promise2"
-```
+✅ **Context Support** - Hỗ trợ cancellation  well-documented  
 
 ## Cách Sử Dụng
 
@@ -27,7 +26,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/to/promise2"
+	"github.com/phucps89/go-promise2"
 )
 
 func main() {
