@@ -333,6 +333,35 @@ defer cancel()
 result, err := promise.Await(ctx)
 ```
 
+**`All`/`Race`/`Any`/`AllSettled` không hủy các promise "thua cuộc"** - đây
+đúng theo spec `Promise.all()`/`Promise.race()` của JS, nhưng khác biệt quan
+trọng ở Go: mỗi promise gắn với 1 goroutine thật đang chạy, không chỉ là dữ
+liệu nhẹ như JS. Khi `All()` reject sớm vì 1 promise lỗi, các promise còn lại
+**vẫn tiếp tục chạy ngầm** - không ai hủy chúng:
+
+```go
+p1 := promise2.NewPromise(func() (int, error) { return 0, errors.New("fail") })
+p2 := promise2.NewPromise(func() (int, error) {
+    select {} // task treo mãi mãi, không bao giờ return
+})
+promise2.All(context.Background(), p1, p2).Await(context.Background())
+// All() reject ngay do p1 lỗi - nhưng goroutine chờ p2 bên trong All() vẫn sống mãi
+```
+
+Nếu 1 trong các promise "thua cuộc" đó không bao giờ tự hoàn thành và `ctx`
+không có timeout, goroutine chờ nó sẽ **leak vĩnh viễn**. Luôn truyền `ctx` có
+timeout/cancel khi dùng các combinator này.
+
+**Không có cách hủy công việc thực sự đang chạy bên trong task** - `ctx`
+truyền vào `Await()`/`Then()`/combinator chỉ điều khiển việc **chờ**, không
+điều khiển việc **thực thi** của `fn`. `NewPromise(fn)` không nhận `ctx`, nên
+`fn` không có cách nào tự biết là nên dừng sớm. Nếu cần, tự bắt `ctx` riêng
+trong closure của `fn` (xem doc comment của `NewPromise` trong `types.go`).
+
+**`Race()` với slice rỗng resolve ngay với zero-value**, khác
+`Promise.race([])` của JS (treo mãi mãi, không bao giờ settle). Lựa chọn này
+tránh treo vô ích nhưng có thể gây bất ngờ nếu bạn quen hành vi JS.
+
 ## Best Practices
 
 1. **Luôn Close Worker Pool**

@@ -6,7 +6,13 @@ import (
 )
 
 // All chờ tất cả promises hoàn thành
-// Nếu bất kỳ promise nào lỗi, trả về lỗi đó
+// Nếu bất kỳ promise nào lỗi, trả về lỗi đó ngay (giống Promise.all() của JS).
+//
+// Lưu ý: khi reject sớm do 1 promise lỗi, các promise còn lại KHÔNG bị hủy -
+// goroutine chờ chúng (bên trong Await(ctx)) vẫn tiếp tục chạy ngầm cho tới
+// khi tự resolve/reject hoặc ctx hết hạn. Nếu một trong số đó không bao giờ
+// tự hoàn thành và ctx không có timeout, goroutine đó leak vĩnh viễn. Luôn
+// truyền ctx có timeout/cancel, đừng dùng context.Background() trần.
 func All[T any](ctx context.Context, promises ...*Promise[T]) *Promise[[]T] {
 	return NewPromiseWithExecutor[[]T](func(resolve func([]T), reject func(error)) {
 		n := len(promises)
@@ -47,7 +53,14 @@ func All[T any](ctx context.Context, promises ...*Promise[T]) *Promise[[]T] {
 	})
 }
 
-// Race trả về kết quả của promise hoàn thành đầu tiên
+// Race trả về kết quả của promise hoàn thành đầu tiên.
+//
+// Khác với Promise.race([]) của JS (treo mãi mãi, không bao giờ settle),
+// Race() với slice rỗng resolve ngay với zero-value của T - tránh treo vô
+// ích, nhưng cần lưu ý nếu bạn quen hành vi JS.
+//
+// Giống All(), các promise "thua cuộc" không bị hủy khi có kết quả - xem
+// caveat goroutine leak ở doc comment của All().
 func Race[T any](ctx context.Context, promises ...*Promise[T]) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
 		if len(promises) == 0 {
@@ -141,6 +154,9 @@ type AnyResult[T any] struct {
 
 // Any trả về kết quả của promise thành công đầu tiên
 // Nếu tất cả promises reject, trả về AggregateError
+//
+// Giống All()/Race(), các promise chưa settle không bị hủy khi Any() đã có
+// kết quả - xem caveat goroutine leak ở doc comment của All().
 func Any[T any](ctx context.Context, promises ...*Promise[T]) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
 		n := len(promises)

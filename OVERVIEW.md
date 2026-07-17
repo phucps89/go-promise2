@@ -263,6 +263,9 @@ go-promise2/                           # Module root (github.com/phucps89/go-pro
 - `Then`/`Map`/`Catch`/`Finally` nhận `ctx` làm tham số đầu tiên - hủy `ctx` sẽ dừng chờ ngay thay vì treo vô thời hạn nếu promise gốc không bao giờ resolve
 - Test suite kèm `-race` và fuzz test cho các đường concurrency quan trọng
 - **Giới hạn đã biết**: `Submit()` có khe hở race cực hẹp khi đua với `Close()` (task có thể lọt vào queue đúng lúc pool vừa đóng xong, không còn worker xử lý) khiến `Promise` đó treo vô thời hạn nếu không dùng `ctx` timeout. Xác suất cực thấp, không panic/crash, và là đánh đổi có chủ đích để tránh một deadlock nghiêm trọng hơn khi bịt kín khe hở này bằng mutex. Xem chi tiết ở comment của `Submit()` trong `pool.go` và mục "Giới Hạn Đã Biết" trong README.md. Luôn `Await()` bằng `ctx` có timeout để không bao giờ bị ảnh hưởng bởi khe hở này
+- **Giới hạn đã biết**: `All`/`Race`/`Any`/`AllSettled` không hủy các promise "thua cuộc" - khớp spec JS Promise, nhưng ở Go mỗi promise gắn với 1 goroutine thật nên có thể leak vĩnh viễn nếu promise đó không bao giờ tự hoàn thành và `ctx` không có timeout
+- **Giới hạn đã biết**: `ctx` chỉ điều khiển việc chờ (`Await`), không điều khiển việc thực thi của `fn` bên trong `NewPromise` - không có cơ chế hủy công việc đang chạy thực sự, phải tự bắt `ctx` riêng trong closure nếu cần
+- **Giới hạn đã biết**: `Race()` với slice rỗng resolve ngay với zero-value, khác `Promise.race([])` của JS (treo mãi mãi)
 
 ---
 

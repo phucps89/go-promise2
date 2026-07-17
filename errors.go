@@ -44,9 +44,12 @@ func (ae *AggregateError) Error() string {
 	return sb.String()
 }
 
-// Errors trả về slice của tất cả errors
+// Errors trả về bản sao của slice errors - sửa slice trả về không ảnh hưởng
+// tới trạng thái nội bộ của AggregateError.
 func (ae *AggregateError) Errors() []error {
-	return ae.errors
+	out := make([]error, len(ae.errors))
+	copy(out, ae.errors)
+	return out
 }
 
 // Count trả về số lượng errors

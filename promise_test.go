@@ -669,6 +669,26 @@ func TestAnyAllRejected(t *testing.T) {
 	}
 }
 
+// TestAggregateErrorsReturnsCopy kiểm tra Errors() trả về bản sao độc lập -
+// sửa slice do caller nhận về không được ảnh hưởng tới trạng thái nội bộ của
+// AggregateError (tránh lộ mutable internal state qua con trỏ slice).
+func TestAggregateErrorsReturnsCopy(t *testing.T) {
+	original := []error{fmt.Errorf("err1"), fmt.Errorf("err2")}
+	ae := NewAggregateError(original)
+
+	got := ae.Errors()
+	got[0] = nil
+	got[1] = fmt.Errorf("mutated")
+
+	again := ae.Errors()
+	if again[0] == nil || again[0].Error() != "err1" {
+		t.Fatalf("mutating the returned slice affected internal state: got %v", again[0])
+	}
+	if again[1].Error() != "err2" {
+		t.Fatalf("mutating the returned slice affected internal state: got %v", again[1])
+	}
+}
+
 // TestSequence kiểm tra Sequence combinator
 func TestSequence(t *testing.T) {
 	p1 := NewPromise(func() (int, error) {

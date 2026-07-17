@@ -37,7 +37,23 @@ func (p *Promise[T]) resolve(r Result[T]) {
 	})
 }
 
-// NewPromise tạo một Promise mới
+// NewPromise tạo một Promise mới.
+//
+// Lưu ý kiến trúc: fn không nhận context.Context, nên không có cách nào để
+// báo cho fn biết là nên dừng sớm - ctx truyền vào Await()/Then()/... chỉ
+// điều khiển việc CHỜ, không điều khiển việc THỰC THI của fn. Nếu cần fn tự
+// kiểm tra hủy (vd để dừng sớm khi All()/Race() đã có kết quả), tự viết fn
+// với closure bắt ctx riêng, ví dụ:
+//
+//	ctx, cancel := context.WithCancel(context.Background())
+//	p := promise2.NewPromise(func() (int, error) {
+//		select {
+//		case <-ctx.Done():
+//			return 0, ctx.Err()
+//		case <-time.After(time.Second):
+//			return 42, nil
+//		}
+//	})
 func NewPromise[T any](fn func() (T, error)) *Promise[T] {
 	p := newPromise[T]()
 
