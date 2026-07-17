@@ -11,10 +11,12 @@ go get github.com/phucps89/go-promise2
 ## Tính Năng
 
 ✅ **Promise API** - Tương tự JavaScript Promise  
-✅ **Worker Pool** - Quản lý goroutines hiệu quả  
-✅ **Combinators** - All, Race, AllSettled, Any, Sequence  
+✅ **Worker Pool** - Quản lý goroutines hiệu quả, có backpressure  
+✅ **Combinators** - All, Race, AllSettled, Any, Sequence, Pool  
 ✅ **Chainable** - Then, Map, Catch, Finally  
-✅ **Context Support** - Hỗ trợ cancellation  well-documented  
+✅ **Context Support** - Hỗ trợ cancellation xuyên suốt các API chain  
+✅ **Panic Safety** - Panic trong task/executor được tự động recover, không crash process  
+✅ **Repeated Await** - `Await()`/`Then()`/... gọi nhiều lần hoặc đồng thời đều an toàn, kết quả được cache  
 
 ## Cách Sử Dụng
 
@@ -63,7 +65,7 @@ result, err := promise.Await(context.Background())
 ```go
 promise := promise2.NewPromise(func() (int, error) {
 	return 10, nil
-}).Then(func(val int) error {
+}).Then(context.Background(), func(val int) error {
 	fmt.Println("Received:", val)
 	return nil
 })
@@ -74,7 +76,7 @@ promise := promise2.NewPromise(func() (int, error) {
 ```go
 promise := promise2.NewPromise(func() (int, error) {
 	return 5, nil
-}).Map(func(val int) (int, error) {
+}).Map(context.Background(), func(val int) (int, error) {
 	return val * 2, nil  // Kết quả: 10
 })
 ```
@@ -84,7 +86,7 @@ promise := promise2.NewPromise(func() (int, error) {
 ```go
 promise := promise2.NewPromise(func() (int, error) {
 	return 0, fmt.Errorf("something failed")
-}).Catch(func(err error) (int, error) {
+}).Catch(context.Background(), func(err error) (int, error) {
 	fmt.Println("Caught error:", err)
 	return 0, nil  // Recover with default value
 })
@@ -95,10 +97,14 @@ promise := promise2.NewPromise(func() (int, error) {
 ```go
 promise := promise2.NewPromise(func() (string, error) {
 	return "done", nil
-}).Finally(func() {
+}).Finally(context.Background(), func() {
 	fmt.Println("Cleanup")
 })
 ```
+
+> `Then`/`Map`/`Catch`/`Finally` đều nhận `ctx` làm tham số đầu tiên: nếu `ctx`
+> bị hủy trước khi promise gốc resolve, bước chain đó sẽ dừng chờ ngay với
+> `ctx.Err()` thay vì treo vô thời hạn.
 
 ### 7. Worker Pool
 
@@ -122,6 +128,12 @@ r1, _ := p1.Await(context.Background())
 r2, _ := p2.Await(context.Background())
 fmt.Println(r1, r2) // 42 100
 ```
+
+> `Submit()` block (backpressure) nếu hàng đợi đã đầy, cho tới khi có chỗ
+> trống hoặc pool bị đóng - không tạo goroutine phụ cho mỗi task. Panic bên
+> trong task được tự động recover và trả về `ErrTaskPanicked` thay vì làm
+> crash worker. `Close()` an toàn khi gọi đồng thời với `Submit()` từ
+> goroutine khác, và có thể gọi nhiều lần.
 
 ### 8. Promise.All() - Chờ tất cả hoàn thành
 
@@ -236,6 +248,7 @@ results, _ := promise2.Pool(context.Background(), pool, tasks...).Await(context.
 
 ```go
 pool := promise2.NewWorkerPool[int](4)
+defer pool.Close()
 
 // Lấy thống kê
 stats := pool.Stats()
@@ -244,28 +257,49 @@ fmt.Printf("Queue Size: %d\n", stats.QueueSize)
 fmt.Printf("Queue Capacity: %d\n", stats.QueueCapacity)
 ```
 
+### 15. Xử lý lỗi đặc biệt
+
+Package định nghĩa sẵn 3 loại lỗi để nhận diện bằng `errors.Is`/type assertion:
+
+```go
+result, err := promise.Await(ctx)
+switch {
+case errors.Is(err, promise2.ErrTaskPanicked):
+	// task hoặc executor panic, đã được recover
+case errors.Is(err, promise2.ErrPoolClosed):
+	// Submit() vào một WorkerPool đã Close()
+case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+	// ctx truyền vào Await()/Then()/... bị hủy trước khi promise gốc resolve
+default:
+	if ae, ok := err.(*promise2.AggregateError); ok {
+		// tất cả promises trong Any() đều bị reject
+		fmt.Println("all failed:", ae.Count())
+	}
+}
+```
+
 ## API Reference
 
 ### Promise[T]
 
 | Method | Mô Tả |
 |--------|-------|
-| `NewPromise(fn)` | Tạo promise từ function |
-| `NewPromiseWithExecutor(executor)` | Tạo promise với executor pattern |
-| `Await(ctx)` | Chờ kết quả (blocking) |
-| `Then(fn)` | Chuỗi thực thi sau promise hoàn thành |
-| `Map(fn)` | Transform giá trị của promise |
-| `Catch(fn)` | Xử lý lỗi |
-| `Finally(fn)` | Cleanup - luôn chạy dù success hay fail |
+| `NewPromise(fn)` | Tạo promise từ function. Panic trong `fn` được recover, trả về `ErrTaskPanicked` |
+| `NewPromiseWithExecutor(executor)` | Tạo promise với executor pattern. Panic trong `executor` cũng được recover |
+| `Await(ctx)` | Chờ kết quả (blocking). Gọi được nhiều lần, kể cả đồng thời từ nhiều goroutine - kết quả được cache sau lần resolve đầu tiên |
+| `Then(ctx, fn)` | Chuỗi thực thi sau promise hoàn thành. Hủy `ctx` sẽ dừng chờ ngay với `ctx.Err()` |
+| `Map(ctx, fn)` | Transform giá trị của promise |
+| `Catch(ctx, fn)` | Xử lý lỗi (kể cả lỗi do `ctx` hết hạn khi chờ promise gốc) |
+| `Finally(ctx, fn)` | Cleanup - luôn chạy dù thành công, lỗi, hay `ctx` hết hạn |
 
 ### WorkerPool[T]
 
 | Method | Mô Tả |
 |--------|-------|
-| `NewWorkerPool(numWorkers)` | Tạo worker pool |
-| `Submit(fn)` | Gửi task vào pool, trả về Promise |
-| `Close()` | Đóng pool, chờ tất cả tasks hoàn thành |
-| `Stats()` | Lấy thống kê về pool |
+| `NewWorkerPool(numWorkers)` | Tạo worker pool. `numWorkers <= 0` tự động fallback về 1 |
+| `Submit(fn)` | Gửi task vào pool, trả về Promise ngay. **Block** nếu queue đã đầy (backpressure) cho tới khi có chỗ hoặc pool đóng |
+| `Close()` | Đóng pool, chờ task đang chạy/còn trong queue chạy xong. An toàn khi gọi đồng thời với `Submit()`, gọi nhiều lần cũng an toàn (idempotent) |
+| `Stats()` | Lấy thống kê về pool (`NumWorkers`, `QueueSize`, `QueueCapacity`) |
 
 ### Combinators
 
@@ -355,7 +389,11 @@ _, err := promise2.All(context.Background(), promises...).Await(context.Backgrou
 ## Chạy Tests
 
 ```bash
-go test github.com/phucps89/go-promise2/... -v
+# Chạy toàn bộ test, khuyến khích kèm -race vì package khai thác concurrency nhiều
+go test ./... -race -v
+
+# Fuzz thật (không chỉ chạy seed corpus) cho WorkerPool trong 15 giây
+go test -run '^$' -fuzz FuzzWorkerPoolRoundTrip -fuzztime 15s .
 ```
 
 ## License

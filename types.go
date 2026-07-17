@@ -11,21 +11,45 @@ type Result[T any] struct {
 	Err   error
 }
 
-// Promise là một wrapper cho async operation
+// Promise là một wrapper cho async operation.
+//
+// Kết quả được cache lại sau khi resolve lần đầu tiên (bằng resolveOnce),
+// nên Await/Then/Map/Catch/Finally có thể được gọi nhiều lần - kể cả đồng thời
+// từ nhiều goroutine - và luôn nhận được cùng một giá trị, giống hành vi
+// .then() có thể gọi lặp lại của Promise trong JavaScript.
 type Promise[T any] struct {
-	resultChan chan Result[T]
-	once       sync.Once
+	done        chan struct{}
+	result      Result[T]
+	resolveOnce sync.Once
+}
+
+func newPromise[T any]() *Promise[T] {
+	return &Promise[T]{done: make(chan struct{})}
+}
+
+// resolve gắn kết quả cho Promise. Chỉ lần gọi đầu tiên có tác dụng - các lần
+// gọi sau (ví dụ executor gọi resolve rồi reject, hoặc panic sau khi đã resolve)
+// bị bỏ qua, đúng theo ngữ nghĩa "settle một lần" của Promise.
+func (p *Promise[T]) resolve(r Result[T]) {
+	p.resolveOnce.Do(func() {
+		p.result = r
+		close(p.done)
+	})
 }
 
 // NewPromise tạo một Promise mới
 func NewPromise[T any](fn func() (T, error)) *Promise[T] {
-	p := &Promise[T]{
-		resultChan: make(chan Result[T], 1),
-	}
+	p := newPromise[T]()
 
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				p.resolve(Result[T]{Err: ErrTaskPanicked})
+			}
+		}()
+
 		val, err := fn()
-		p.resultChan <- Result[T]{Value: val, Err: err}
+		p.resolve(Result[T]{Value: val, Err: err})
 	}()
 
 	return p
@@ -36,22 +60,21 @@ func NewPromise[T any](fn func() (T, error)) *Promise[T] {
 func NewPromiseWithExecutor[T any](
 	executor func(resolve func(T), reject func(error)),
 ) *Promise[T] {
-	p := &Promise[T]{
-		resultChan: make(chan Result[T], 1),
+	p := newPromise[T]()
+
+	resolve := func(val T) {
+		p.resolve(Result[T]{Value: val})
+	}
+	reject := func(err error) {
+		p.resolve(Result[T]{Err: err})
 	}
 
 	go func() {
-		resolve := func(val T) {
-			p.once.Do(func() {
-				p.resultChan <- Result[T]{Value: val, Err: nil}
-			})
-		}
-
-		reject := func(err error) {
-			p.once.Do(func() {
-				p.resultChan <- Result[T]{Err: err}
-			})
-		}
+		defer func() {
+			if r := recover(); r != nil {
+				p.resolve(Result[T]{Err: ErrTaskPanicked})
+			}
+		}()
 
 		executor(resolve, reject)
 	}()
@@ -59,90 +82,86 @@ func NewPromiseWithExecutor[T any](
 	return p
 }
 
-// Await chờ kết quả của Promise
+// Await chờ kết quả của Promise. An toàn khi gọi nhiều lần (kể cả đồng thời
+// từ nhiều goroutine) - lần gọi đầu tiên chờ kết quả thật, các lần sau đọc
+// thẳng giá trị đã cache.
 func (p *Promise[T]) Await(ctx context.Context) (T, error) {
 	select {
-	case result := <-p.resultChan:
-		return result.Value, result.Err
+	case <-p.done:
+		return p.result.Value, p.result.Err
 	case <-ctx.Done():
 		var zero T
 		return zero, ctx.Err()
 	}
 }
 
-// Then chuỗi Promise - thực thi fn khi Promise hiện tại hoàn thành
-func (p *Promise[T]) Then(fn func(T) error) *Promise[T] {
+// Then chuỗi Promise - thực thi fn khi Promise hiện tại hoàn thành.
+// ctx được truyền xuống Await bên trong, nên hủy ctx sẽ dừng chờ thay vì
+// treo vô thời hạn nếu Promise gốc không bao giờ resolve.
+func (p *Promise[T]) Then(ctx context.Context, fn func(T) error) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
-		go func() {
-			val, err := p.Await(context.Background())
-			if err != nil {
-				reject(err)
-				return
-			}
+		val, err := p.Await(ctx)
+		if err != nil {
+			reject(err)
+			return
+		}
 
-			if err := fn(val); err != nil {
-				reject(err)
-				return
-			}
+		if err := fn(val); err != nil {
+			reject(err)
+			return
+		}
 
-			resolve(val)
-		}()
+		resolve(val)
 	})
 }
 
 // Map chuyển đổi giá trị của Promise
-func (p *Promise[T]) Map(fn func(T) (T, error)) *Promise[T] {
+func (p *Promise[T]) Map(ctx context.Context, fn func(T) (T, error)) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
-		go func() {
-			val, err := p.Await(context.Background())
-			if err != nil {
-				reject(err)
-				return
-			}
+		val, err := p.Await(ctx)
+		if err != nil {
+			reject(err)
+			return
+		}
 
-			newVal, err := fn(val)
-			if err != nil {
-				reject(err)
-				return
-			}
+		newVal, err := fn(val)
+		if err != nil {
+			reject(err)
+			return
+		}
 
-			resolve(newVal)
-		}()
+		resolve(newVal)
 	})
 }
 
 // Catch xử lý lỗi của Promise
-func (p *Promise[T]) Catch(fn func(error) (T, error)) *Promise[T] {
+func (p *Promise[T]) Catch(ctx context.Context, fn func(error) (T, error)) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
-		go func() {
-			val, err := p.Await(context.Background())
-			if err == nil {
-				resolve(val)
-				return
-			}
+		val, err := p.Await(ctx)
+		if err == nil {
+			resolve(val)
+			return
+		}
 
-			newVal, err := fn(err)
-			if err != nil {
-				reject(err)
-				return
-			}
+		newVal, err := fn(err)
+		if err != nil {
+			reject(err)
+			return
+		}
 
-			resolve(newVal)
-		}()
+		resolve(newVal)
 	})
 }
 
 // Finally thực thi fn dù Promise thành công hay thất bại
-func (p *Promise[T]) Finally(fn func()) *Promise[T] {
+func (p *Promise[T]) Finally(ctx context.Context, fn func()) *Promise[T] {
 	return NewPromiseWithExecutor[T](func(resolve func(T), reject func(error)) {
-		go func() {
-			val, err := p.Await(context.Background())
-			fn()
-			if err != nil {
-				reject(err)
-				return
-			}
-			resolve(val)
-		}()
+		val, err := p.Await(ctx)
+		fn()
+		if err != nil {
+			reject(err)
+			return
+		}
+		resolve(val)
 	})
 }

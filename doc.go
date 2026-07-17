@@ -43,10 +43,10 @@ package promise2
 //
 //	promise := promise2.NewPromise(func() (int, error) {
 //		return 10, nil
-//	}).Then(func(val int) error {
+//	}).Then(context.Background(), func(val int) error {
 //		fmt.Println("Got:", val)
 //		return nil
-//	}).Catch(func(err error) (int, error) {
+//	}).Catch(context.Background(), func(err error) (int, error) {
 //		fmt.Println("Error:", err)
 //		return 0, nil
 //	})
@@ -123,11 +123,11 @@ package promise2
 // Promise:
 //   - NewPromise(fn) - Tạo promise từ function
 //   - NewPromiseWithExecutor(executor) - Tạo promise với executor
-//   - Await(ctx) - Chờ kết quả (blocking)
-//   - Then(fn) - Chuỗi promise
-//   - Map(fn) - Transform giá trị
-//   - Catch(fn) - Xử lý lỗi
-//   - Finally(fn) - Cleanup
+//   - Await(ctx) - Chờ kết quả (blocking, có thể gọi nhiều lần)
+//   - Then(ctx, fn) - Chuỗi promise
+//   - Map(ctx, fn) - Transform giá trị
+//   - Catch(ctx, fn) - Xử lý lỗi
+//   - Finally(ctx, fn) - Cleanup
 //
 // WorkerPool:
 //   - NewWorkerPool[T](numWorkers) - Tạo worker pool
