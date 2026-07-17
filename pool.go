@@ -96,6 +96,20 @@ func (p *WorkerPool[T]) executeTask(t task[T]) {
 // worker pool có giới hạn, không cần goroutine riêng cho mỗi lần Submit và
 // không giữ khóa nào trong lúc chờ, nên Close() không bao giờ bị một Submit()
 // đang block làm treo theo (kể cả khi worker đang xử lý một task bị treo).
+//
+// Giới hạn đã biết (đánh đổi có chủ đích): giữa lúc closed.Load() thấy false
+// và lúc select bên dưới thực sự chạy, Close() có thể chạy trọn vẹn (kể cả
+// wg.Wait() return, mọi worker đã thoát). Khi đó select thấy cả hai case đều
+// "ready" (taskQueue còn chỗ trống VÀ done đã đóng) nên có thể chọn ngẫu
+// nhiên nhánh gửi vào taskQueue - task lọt vào queue nhưng không còn worker
+// nào xử lý, khiến Promise tương ứng Await() treo vô thời hạn nếu ctx không
+// có timeout. Xác suất cực thấp (chỉ xảy ra khi Submit() và Close() đua nhau
+// đúng vài nano giây). Cách khắc phục triệt để (khóa toàn bộ đoạn kiểm tra +
+// gửi bằng sync.RWMutex) đã được thử và bị loại bỏ vì gây deadlock nghiêm
+// trọng hơn: Close() sẽ treo vĩnh viễn nếu một Submit() đang block chờ chỗ
+// trống trong queue trong khi worker đang xử lý một task không bao giờ trả
+// về. Khuyến nghị: luôn Await() bằng ctx có timeout, đặc biệt với các task
+// được Submit() gần thời điểm pool có thể bị Close().
 func (p *WorkerPool[T]) Submit(fn func() (T, error)) *Promise[T] {
 	promise := newPromise[T]()
 

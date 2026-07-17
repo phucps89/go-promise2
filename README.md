@@ -312,6 +312,27 @@ default:
 | `Sequence(ctx, promises...)` | Chạy promises theo thứ tự |
 | `Pool(ctx, pool, tasks...)` | Chạy tasks trong worker pool |
 
+## ⚠️ Giới Hạn Đã Biết
+
+`WorkerPool.Submit()` có một khe hở race **cực hẹp, xác suất cực thấp**: nếu
+`Submit()` và `Close()` đua nhau đúng lúc (`Submit()` vừa thấy pool chưa đóng
+thì `Close()` lập tức chạy xong hoàn toàn, kể cả chờ hết mọi worker thoát),
+task có thể vẫn lọt được vào queue dù không còn worker nào xử lý - `Promise`
+đó sẽ treo vô thời hạn ở `Await()` nếu không có `ctx` timeout. Đây không phải
+panic hay crash, và hầu hết implementation worker pool đơn giản đều có giới
+hạn tương tự (bịt hoàn toàn khe hở này bằng mutex sẽ đổi lại bằng nguy cơ
+`Close()` bị deadlock nếu có `Submit()` đang chờ chỗ trống trong lúc worker
+kẹt ở một task không bao giờ trả về - rủi ro nghiêm trọng hơn nhiều).
+
+**Khuyến nghị**: luôn `Await()` bằng `ctx` có timeout, đặc biệt với các task
+được `Submit()` gần thời điểm pool có thể bị `Close()`:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+result, err := promise.Await(ctx)
+```
+
 ## Best Practices
 
 1. **Luôn Close Worker Pool**

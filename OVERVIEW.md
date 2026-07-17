@@ -262,6 +262,7 @@ go-promise2/                           # Module root (github.com/phucps89/go-pro
 - `WorkerPool.Close()` an toàn khi gọi đồng thời với `Submit()` (không còn panic "send on closed channel"), có thể gọi nhiều lần, và đảm bảo task đã được `Submit()` chấp nhận sẽ luôn được chạy trước khi pool đóng hẳn
 - `Then`/`Map`/`Catch`/`Finally` nhận `ctx` làm tham số đầu tiên - hủy `ctx` sẽ dừng chờ ngay thay vì treo vô thời hạn nếu promise gốc không bao giờ resolve
 - Test suite kèm `-race` và fuzz test cho các đường concurrency quan trọng
+- **Giới hạn đã biết**: `Submit()` có khe hở race cực hẹp khi đua với `Close()` (task có thể lọt vào queue đúng lúc pool vừa đóng xong, không còn worker xử lý) khiến `Promise` đó treo vô thời hạn nếu không dùng `ctx` timeout. Xác suất cực thấp, không panic/crash, và là đánh đổi có chủ đích để tránh một deadlock nghiêm trọng hơn khi bịt kín khe hở này bằng mutex. Xem chi tiết ở comment của `Submit()` trong `pool.go` và mục "Giới Hạn Đã Biết" trong README.md. Luôn `Await()` bằng `ctx` có timeout để không bao giờ bị ảnh hưởng bởi khe hở này
 
 ---
 
